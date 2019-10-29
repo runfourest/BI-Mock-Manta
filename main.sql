@@ -7,6 +7,9 @@ Dimensions =
 Time
 Patient
 Location
+Drug
+Encounter
+
 
 
 
@@ -17,46 +20,66 @@ Location
 
 * Possibly Make a Bridge Table for Cohorts (cohorts = groups)
 *
-
-
-
-
-
 */
 
 
-
-
-
-
-
-
-
-
-
 CREATE TABLE prd_dw.Health_Indicator_Fact (
-
-
-
-
-
-
-
-
-
-
-
+	Encounter_key Int,
+	Patient_key Int,
+	Location_key Int,
+	Drug_key Int,
+	Time_key Int,
+	NutritionCalc Int, 
+	PrescriptionsCalc Int,
+	EncountersCalc int,
+	AllergyCalc int
 )
 
 
 
 
 CREATE TABLE prd_dw.Patient_Dim (
+	PATIENT_KEY INT,
+	PATIENT_ID INT,
+	GENDER VARCHAR(50),
+	birthdate DATE,
+	given_name VARCHAR(50),
+	family_name VARCHAR(50),
+	death_date DATE,
+	isDead Varchar(10)
+);
 
 
 
+SELECT
+	Patient.Patient_Id,
+	A.AlergyCount,
+	Person.Person_id,
+	Person.birthdate,
+	Person.deathdate,
+	Person.gender,
 
-)
+	CASE 
+		WHEN
+		Person.birthdate <= Person.deathdate 
+			THEN 
+				'Alive'
+		Else
+			'Dead'
+		End as isDead,
+	Person
+FROM
+	Patient as Patient
+INNER JOIN ( 
+	SELECT
+		COUNT(Allergy.Allergy_ID) as AlergyCount,
+		PATIENT.PATIENT_ID
+	FROM
+		PATIENT as Patient
+		INNER JOIN Allergy as Allergy on Allergy.Patient_ID = Patient.Patient_ID
+	GROUP BY PATIENT.PATIENT_ID
+) as A on A.patient_id = patient.patient_id 
+
 
 /* 
 
@@ -65,19 +88,19 @@ I'm going to randomly make the ETL on this one a Stored Procedure Database side.
 
 */
 
-CREATE TABLE prd_dw.Encounter_Dim (
-	enc_key INT(11),
-	enc_id INT(11),
-	patient_id INT(11),
+CREATE TABLE EncounterDimension (
+	encounter_key INT,
+	encounter_id INT,
+	patient_id INT,
 	encounter_date DATE,
 	provider_name VARCHAR(101),
 	data_clerk_name VARCHAR(101),
 	date_submitted DATE,
-	calculated_age DOUBLE,
+	calculated_age FLOAT,
 	maturity VARCHAR(255),
-	maturity_ordinal INT(11),
+	maturity_ordinal INT,
 	age_category VARCHAR(255),
-	age_category_ordinal INT(11)
+	age_category_ordinal INT
 )
 
 
@@ -119,8 +142,9 @@ Todo:
 Maybe a recursive function or something based off postal codes. Idk
 */
 
-CREATE TABLE prd_dw.Location_Dim(
-	location_key INT(11),
+CREATE TABLE prd_dw.LocationDimension(
+	location_key int
+	location_id INT,
 	name VARCHAR(255),
 	address1 VARCHAR(50),
 	address2 VARCHAR(50),
@@ -129,19 +153,19 @@ CREATE TABLE prd_dw.Location_Dim(
 	postal_code VARCHAR(50),
 	country VARCHAR(50),
 	latitude VARCHAR(50),
-	longitude (VARCHAR(50),
-	creator INT(11),
+	longitude VARCHAR(50),
+	creator INT,
 	date_created DATETIME,
 	country_district VARCHAR(50),
 	neighborhood_cell VARCHAR(50),
 	region VARCHAR(50),
 	subregion VARCHAR(50),
 	township_division VARCHAR(50),
-	retired TINYINT(1),
-	retired_by INT(11),
+	retired TINYINT,
+	retired_by INT,
 	date_retired DATETIME,
 	retire_reason VARCHAR(255),
-	parent_location INT(11),
+	parent_location INT,
 	uuid CHAR(38)
 )
 
@@ -191,11 +215,39 @@ SELECT
 
 /* Done */ 
 
-CREATE TABLE prd_dw.Time_Dim (
-
-
-)
-
+CREATE TABLE dbo.DateDimension
+(
+  --DateKey           INT         NOT NULL PRIMARY KEY,
+  [Date]              DATE        NOT NULL,
+  [Day]               TINYINT     NOT NULL,
+  DaySuffix           CHAR(2)     NOT NULL,
+  [Weekday]           TINYINT     NOT NULL,
+  WeekDayName         VARCHAR(10) NOT NULL,
+  IsWeekend           BIT         NOT NULL,
+  IsHoliday           BIT         NOT NULL,
+  HolidayText         VARCHAR(64) SPARSE,
+  DOWInMonth          TINYINT     NOT NULL,
+  [DayOfYear]         SMALLINT    NOT NULL,
+  WeekOfMonth         TINYINT     NOT NULL,
+  WeekOfYear          TINYINT     NOT NULL,
+  ISOWeekOfYear       TINYINT     NOT NULL,
+  [Month]             TINYINT     NOT NULL,
+  [MonthName]         VARCHAR(10) NOT NULL,
+  [Quarter]           TINYINT     NOT NULL,
+  QuarterName         VARCHAR(6)  NOT NULL,
+  [Year]              INT         NOT NULL,
+  MMYYYY              CHAR(6)     NOT NULL,
+  MonthYear           CHAR(7)     NOT NULL,
+  FirstDayOfMonth     DATE        NOT NULL,
+  LastDayOfMonth      DATE        NOT NULL,
+  FirstDayOfQuarter   DATE        NOT NULL,
+  LastDayOfQuarter    DATE        NOT NULL,
+  FirstDayOfYear      DATE        NOT NULL,
+  LastDayOfYear       DATE        NOT NULL,
+  FirstDayOfNextMonth DATE        NOT NULL,
+  FirstDayOfNextYear  DATE        NOT NULL
+);
+GO
 
 
 
@@ -236,8 +288,167 @@ INNER JOIN (
 ) as A on A.patient_id = patient.patient_id 
 
 
-# Location SQL
 
 
 
-	
+
+
+
+
+
+
+
+# Drugs/Orders Fact
+
+
+SELECT
+	PAT.PATIENT_ID as Patient_ID,
+	--COUNT()
+
+FROM PATIENT as Pat 
+INNER JOIN Orders as Ord on Ord.Patient_ID = Pat.Patient_ID
+
+
+
+
+
+#  Allergy Index Fact
+
+
+
+
+CREATE PROCEDURE etlAllergyFact
+
+	AS
+
+BEGIN 
+
+SELECT 
+*
+INTO #TEMP1 
+FROM
+( 
+
+SELECT
+Pat.Patient_ID as Patient_id,
+CASE
+	severity_concept_id
+	WHEN severity_concept_id <= 1 
+	THEN "severe"
+	WHEN severity_concept_id >= 2 
+	THEN "mild"
+	END AS severity_concept_string
+FROM openmrs.PATIENT as Pat
+INNER JOIN openmrs.ALLERGY as allergy on allergy.patientID
+
+)
+
+
+
+
+
+
+)
+
+
+
+
+
+SELECT 
+*
+INTO #TEMP2
+FROM 
+
+
+
+
+
+SELECT 
+*
+INTO #TEMP3
+FROM 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- BASE SELECT QUERIES 
+
+
+select * from openmrs.drug;
+select * from openmrs.drug_ingredient;
+select * from openmrs.orders;
+
+select * from openmrs.patient;
+
+select * from openmrs.allergy
+
